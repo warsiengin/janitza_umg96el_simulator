@@ -3,6 +3,7 @@ version: 0.1.0
 slug: janitza_umg96el_simulator
 description: Read-only Modbus TCP simulator for the Janitza UMG 96-EL guide register map.
 url: https://github.com/warsiengin/janitza_umg96el_simulator
+icon: icon.png
 arch:
   - amd64
   - aarch64
