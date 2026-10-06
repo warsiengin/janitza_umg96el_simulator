@@ -22,7 +22,7 @@ Options:
 | `ip` | `0.0.0.0` | IPv4 address to bind. Use `0.0.0.0` to listen on all host interfaces, or enter a specific IPv4 address assigned to the Home Assistant host. |
 | `tcp_port` | `502` | Modbus TCP listen port on the Home Assistant host. |
 | `unit_id` | `1` | Modbus unit identifier (1–247). |
-| `register_offset` | `0` | Register-address offset: `0` for the guide's listed addresses, or `32768` for the alternate addressing note in the guide. |
+| `register_offset` | `0` | Register-address offset: enter `0` for the guide's listed addresses, or `32768` for the alternate addressing note in the guide. |
 | `update_interval` | `200` | Simulated reading refresh interval in milliseconds (50–60000). |
 
 The simulator supports function codes 03 (read holding registers) and 04 (read

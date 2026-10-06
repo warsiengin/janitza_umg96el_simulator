@@ -118,9 +118,17 @@ def _register_offset(value: object) -> int:
         if len(value) != 1:
             raise ValueError("register_offset must contain exactly one value")
         value = value[0]
+    if isinstance(value, str):
+        try:
+            value = int(value.strip())
+        except ValueError as error:
+            raise ValueError(
+                "register_offset must be 0 or 32768"
+            ) from error
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(
-            "register_offset must be 0 or 32768 (or a one-item list containing either)"
+            "register_offset must be 0 or 32768 (as an integer, numeric string, "
+            "or one-item list)"
         )
     if value not in (0, 32768):
         raise ValueError("register_offset must be either 0 or 32768")

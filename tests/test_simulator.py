@@ -140,7 +140,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings, Settings("0.0.0.0", 502, 1, 0, 200))
 
     def test_loads_home_assistant_single_item_list_option(self) -> None:
-        for offset in (0, 32768):
+        for offset in (0, 32768, "0", "32768", [0], ["0"]):
             with self.subTest(offset=offset), tempfile.TemporaryDirectory() as directory:
                 options_path = Path(directory) / "options.json"
                 options_path.write_text(
@@ -149,14 +149,15 @@ class SettingsTests(unittest.TestCase):
                             "tcp_port": 502,
                             "ip": "127.0.0.1",
                             "unit_id": 1,
-                            "register_offset": [offset],
+                            "register_offset": offset,
                             "update_interval": 200,
                         }
                     ),
                     encoding="utf-8",
                 )
                 settings = load_settings(options_path)
-            self.assertEqual(settings.register_offset, offset)
+            expected = offset[0] if isinstance(offset, list) else offset
+            self.assertEqual(settings.register_offset, int(expected))
 
     def test_loads_scalar_register_offset_for_existing_options(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -177,7 +178,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.register_offset, 0)
 
     def test_rejects_invalid_register_offset_list(self) -> None:
-        for offset in ([], [0, 32768], [1], True):
+        for offset in ([], [0, 32768], [1], True, "1", "invalid", None, 1.5):
             with self.subTest(offset=offset), tempfile.TemporaryDirectory() as directory:
                 options_path = Path(directory) / "options.json"
                 options_path.write_text(
@@ -205,7 +206,7 @@ class SettingsTests(unittest.TestCase):
                             "ip": address,
                             "tcp_port": 502,
                             "unit_id": 1,
-                            "register_offset": [0],
+                            "register_offset": 0,
                             "update_interval": 200,
                         }
                     ),
