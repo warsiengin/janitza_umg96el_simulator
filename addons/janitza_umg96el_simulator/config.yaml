@@ -1,0 +1,26 @@
+name: Janitza UMG 96-EL Modbus Simulator
+version: 0.1.0
+slug: janitza_umg96el_simulator
+description: Read-only Modbus TCP simulator for the Janitza UMG 96-EL guide register map.
+url: https://github.com/warsiengin/janitza_umg96el_simulator
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: services
+boot: auto
+init: false
+ports:
+  502/tcp: 502
+ports_description:
+  502/tcp: Modbus TCP
+options:
+  tcp_port: 502
+  unit_id: 1
+  register_offset: 0
+  update_interval: 200
+schema:
+  tcp_port: port
+  unit_id: int(1,247)
+  register_offset: list(0|32768)
+  update_interval: int(50,60000)
