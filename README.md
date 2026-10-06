@@ -11,15 +11,16 @@ it does not create Home Assistant entities by itself.
 1. In Home Assistant, open **Settings → Add-ons → Add-on Store → ⋮ → Repositories**.
 2. Add `https://github.com/warsiengin/janitza_umg96el_simulator`.
 3. Install **Janitza UMG 96-EL Modbus Simulator**, then review its options.
-4. Start the add-on. It listens on TCP port `502` by default. The port is
-   published on the Home Assistant host; allow TCP 502 through any applicable
-   firewall when connecting from another device.
+4. Configure the listener IP and port, then start the add-on. With the default
+   `0.0.0.0`, it listens on all Home Assistant host interfaces. Allow the
+   selected TCP port through any applicable firewall when connecting remotely.
 
 Options:
 
 | Option | Default | Meaning |
 | --- | ---: | --- |
-| `tcp_port` | `502` | Modbus TCP listen port. If changed, also change the add-on's published port in its Network settings. |
+| `ip` | `0.0.0.0` | IPv4 address to bind. Use `0.0.0.0` to listen on all host interfaces, or enter a specific IPv4 address assigned to the Home Assistant host. |
+| `tcp_port` | `502` | Modbus TCP listen port on the Home Assistant host. |
 | `unit_id` | `1` | Modbus unit identifier (1–247). |
 | `register_offset` | `0` | Register-address offset: `0` for the guide's listed addresses, or `32768` for the alternate addressing note in the guide. |
 | `update_interval` | `200` | Simulated reading refresh interval in milliseconds (50–60000). |
@@ -32,10 +33,16 @@ zero, while reads outside those blocks return an illegal-address exception.
 Writes are not supported. Generated readings are illustrative synthetic values,
 not calibrated measurements or a full physical model of the meter.
 
+The add-on uses host networking so the configured IP and port are the actual
+host listener address and port; there is no separate container port mapping to
+keep in sync. Choose `0.0.0.0` unless you specifically need to bind to one host
+interface.
+
 ## Connect Home Assistant
 
-Configure the built-in Modbus integration. Replace `192.168.1.10` with the
-Home Assistant host's LAN address, and append sensors as needed:
+Configure the built-in Modbus integration. Set `host` to the configured `ip`
+address (or the Home Assistant host's LAN IP when `ip` is `0.0.0.0`) and set
+`port` to the configured `tcp_port`, then append sensors as needed:
 
 ```yaml
 modbus:

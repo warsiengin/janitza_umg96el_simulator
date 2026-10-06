@@ -1,6 +1,8 @@
+import json
 import math
 import socket
 import struct
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -29,6 +31,7 @@ def _recv_exactly(connection: socket.socket, size: int) -> bytes:
 class RegisterMapTests(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = Settings(
+            ip="127.0.0.1",
             tcp_port=502,
             unit_id=1,
             register_offset=0,
@@ -98,7 +101,7 @@ class RegisterMapTests(unittest.TestCase):
         self.assertGreater(later["active_energy_import"], first["active_energy_import"])
 
     def test_tcp_server_handles_a_complete_modbus_request(self) -> None:
-        server = ModbusTCPServer(("127.0.0.1", 0), self.settings)
+        server = ModbusTCPServer((self.settings.ip, 0), self.settings)
         server.update(self.registers)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -134,7 +137,82 @@ class RegisterMapTests(unittest.TestCase):
 class SettingsTests(unittest.TestCase):
     def test_defaults_load_without_options_file(self) -> None:
         settings = load_settings(Path("a-file-that-does-not-exist.json"))
-        self.assertEqual(settings, Settings(502, 1, 0, 200))
+        self.assertEqual(settings, Settings("0.0.0.0", 502, 1, 0, 200))
+
+    def test_loads_home_assistant_single_item_list_option(self) -> None:
+        for offset in (0, 32768):
+            with self.subTest(offset=offset), tempfile.TemporaryDirectory() as directory:
+                options_path = Path(directory) / "options.json"
+                options_path.write_text(
+                    json.dumps(
+                        {
+                            "tcp_port": 502,
+                            "ip": "127.0.0.1",
+                            "unit_id": 1,
+                            "register_offset": [offset],
+                            "update_interval": 200,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                settings = load_settings(options_path)
+            self.assertEqual(settings.register_offset, offset)
+
+    def test_loads_scalar_register_offset_for_existing_options(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            options_path = Path(directory) / "options.json"
+            options_path.write_text(
+                json.dumps(
+                    {
+                        "tcp_port": 502,
+                        "ip": "127.0.0.1",
+                        "unit_id": 1,
+                        "register_offset": 0,
+                        "update_interval": 200,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            settings = load_settings(options_path)
+        self.assertEqual(settings.register_offset, 0)
+
+    def test_rejects_invalid_register_offset_list(self) -> None:
+        for offset in ([], [0, 32768], [1], True):
+            with self.subTest(offset=offset), tempfile.TemporaryDirectory() as directory:
+                options_path = Path(directory) / "options.json"
+                options_path.write_text(
+                    json.dumps(
+                        {
+                            "tcp_port": 502,
+                            "ip": "127.0.0.1",
+                            "unit_id": 1,
+                            "register_offset": offset,
+                            "update_interval": 200,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                with self.assertRaises(ValueError):
+                    load_settings(options_path)
+
+    def test_rejects_invalid_ip_option(self) -> None:
+        for address in ("", "localhost", "192.0.2.1/24", "2001:db8::1", 123):
+            with self.subTest(address=address), tempfile.TemporaryDirectory() as directory:
+                options_path = Path(directory) / "options.json"
+                options_path.write_text(
+                    json.dumps(
+                        {
+                            "ip": address,
+                            "tcp_port": 502,
+                            "unit_id": 1,
+                            "register_offset": [0],
+                            "update_interval": 200,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                with self.assertRaises(ValueError):
+                    load_settings(options_path)
 
 
 if __name__ == "__main__":

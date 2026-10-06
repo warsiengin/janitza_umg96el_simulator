@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import logging
 import math
 import os
@@ -16,6 +17,7 @@ from pathlib import Path
 
 LOGGER = logging.getLogger("janitza_simulator")
 DEFAULTS = {
+    "ip": "0.0.0.0",
     "tcp_port": 502,
     "unit_id": 1,
     "register_offset": 0,
@@ -71,6 +73,7 @@ OPTIONS_PATH = Path("/data/options.json")
 
 @dataclass(frozen=True)
 class Settings:
+    ip: str
     tcp_port: int
     unit_id: int
     register_offset: int
@@ -88,20 +91,40 @@ def load_settings(options_path: Path = OPTIONS_PATH) -> Settings:
         options.update(loaded)
 
     settings = Settings(
+        ip=_ipv4_address(options["ip"]),
         tcp_port=_bounded_int(options["tcp_port"], "tcp_port", 1, 65535),
         unit_id=_bounded_int(options["unit_id"], "unit_id", 1, 247),
-        register_offset=_bounded_int(
-            options["register_offset"], "register_offset", 0, 32768
-        ),
+        register_offset=_register_offset(options["register_offset"]),
         update_interval=_bounded_int(
             options["update_interval"], "update_interval", 50, 60000
         ),
     )
-    if settings.register_offset not in (0, 32768):
-        raise ValueError("register_offset must be either 0 or 32768")
     if max(end for _, end in REGISTER_BLOCKS) + settings.register_offset > 65535:
         raise ValueError("register_offset moves a register beyond Modbus address 65535")
     return settings
+
+
+def _ipv4_address(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("ip must be a valid IPv4 address")
+    try:
+        return str(ipaddress.IPv4Address(value))
+    except ipaddress.AddressValueError as error:
+        raise ValueError("ip must be a valid IPv4 address") from error
+
+
+def _register_offset(value: object) -> int:
+    if isinstance(value, list):
+        if len(value) != 1:
+            raise ValueError("register_offset must contain exactly one value")
+        value = value[0]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            "register_offset must be 0 or 32768 (or a one-item list containing either)"
+        )
+    if value not in (0, 32768):
+        raise ValueError("register_offset must be either 0 or 32768")
+    return value
 
 
 def _bounded_int(value: object, name: str, minimum: int, maximum: int) -> int:
@@ -290,7 +313,7 @@ def _recv_exactly(connection: socket.socket, size: int) -> bytes | None:
 def run() -> None:
     settings = load_settings()
     started_at = time.monotonic()
-    server = ModbusTCPServer(("0.0.0.0", settings.tcp_port), settings)
+    server = ModbusTCPServer((settings.ip, settings.tcp_port), settings)
 
     def update_readings() -> None:
         while True:
@@ -306,7 +329,8 @@ def run() -> None:
     )
     updater.start()
     LOGGER.info(
-        "Serving Modbus TCP on port %s (unit ID %s, register offset %s)",
+        "Serving Modbus TCP on %s:%s (unit ID %s, register offset %s)",
+        settings.ip,
         settings.tcp_port,
         settings.unit_id,
         settings.register_offset,
