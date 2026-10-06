@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
+import http.server
 import ipaddress
+import json
 import logging
 import math
 import os
@@ -14,6 +15,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 LOGGER = logging.getLogger("janitza_simulator")
 DEFAULTS = {
@@ -69,6 +71,11 @@ FLOAT_REGISTERS = {
 REGISTER_BLOCKS = ((0, 12), (802, 936), (5910, 5915), (19000, 19117))
 MAX_READ_REGISTERS = 125
 OPTIONS_PATH = Path("/data/options.json")
+DASHBOARD_PATH = Path(__file__).parent / "www" / "index.html"
+MAX_ACTIVE_POWER_W = 10000.0
+DEFAULT_ACTIVE_POWER_W = 2780.0
+INITIAL_ENERGY_WH = 1_250_000.0
+INGRESS_PORT = 8099
 
 
 @dataclass(frozen=True)
@@ -99,6 +106,10 @@ def load_settings(options_path: Path = OPTIONS_PATH) -> Settings:
             options["update_interval"], "update_interval", 50, 60000
         ),
     )
+    if settings.tcp_port == INGRESS_PORT:
+        raise ValueError(
+            f"tcp_port cannot use {INGRESS_PORT}; that port is reserved for the sidebar"
+        )
     if max(end for _, end in REGISTER_BLOCKS) + settings.register_offset > 65535:
         raise ValueError("register_offset moves a register beyond Modbus address 65535")
     return settings
@@ -143,54 +154,64 @@ def _bounded_int(value: object, name: str, minimum: int, maximum: int) -> int:
     return value
 
 
-def sample_readings(elapsed_seconds: float) -> dict[str, float]:
-    """Return plausible, deterministic three-phase values that drift over time."""
-    phase = elapsed_seconds * (2.0 * math.pi / 30.0)
-    load = 1.0 + 0.08 * math.sin(phase)
-    voltage = 230.0 + 1.2 * math.sin(phase / 3.0)
-    currents = (4.2 * load, 4.0 * load, 4.1 * load)
-    active_power = 2780.0 * load
-    apparent_power = 3150.0 * load
-    reactive_power = math.sqrt(max(apparent_power**2 - active_power**2, 0.0))
-    energy_wh = 1_250_000.0 + (
-        2780.0
-        * (
-            elapsed_seconds
-            + 0.08 * (1.0 - math.cos(phase)) * 30.0 / (2.0 * math.pi)
-        )
-        / 3600.0
+def sample_readings(
+    elapsed_seconds: float,
+    total_real_power_w: float = DEFAULT_ACTIVE_POWER_W,
+    active_energy_import_wh: float = INITIAL_ENERGY_WH,
+) -> dict[str, float]:
+    """Calculate interdependent three-phase readings for the selected load."""
+    phase = elapsed_seconds * (2.0 * math.pi / 45.0)
+    load_ratio = total_real_power_w / MAX_ACTIVE_POWER_W
+    voltage = 230.0 - 2.0 * load_ratio + 0.45 * math.sin(phase)
+    voltage_phases = (
+        voltage,
+        voltage * (0.997 + 0.0003 * math.sin(phase)),
+        voltage * (1.003 - 0.0003 * math.sin(phase)),
     )
-    angle = 0.28
+    power_shares = (
+        1.0 / 3.0 + 0.003 * math.sin(phase),
+        1.0 / 3.0 + 0.003 * math.sin(phase - 2.0 * math.pi / 3.0),
+        1.0 / 3.0 + 0.003 * math.sin(phase + 2.0 * math.pi / 3.0),
+    )
+    phase_powers = tuple(total_real_power_w * share for share in power_shares)
+    power_factor = 0.94 - 0.015 * load_ratio
+    angle = math.acos(power_factor)
+    currents = tuple(
+        watts / (volts * power_factor)
+        for watts, volts in zip(phase_powers, voltage_phases)
+    )
+    reactive_power = total_real_power_w * math.tan(angle)
+    apparent_power = total_real_power_w / power_factor
+    phase_angles = (0.0, -2.0 * math.pi / 3.0, 2.0 * math.pi / 3.0)
 
     values = {
         "ct_primary": 100.0,
         "ct_secondary": 5.0,
-        "voltage_l1_n": voltage,
-        "voltage_l2_n": voltage * 0.997,
-        "voltage_l3_n": voltage * 1.003,
+        "voltage_l1_n": voltage_phases[0],
+        "voltage_l2_n": voltage_phases[1],
+        "voltage_l3_n": voltage_phases[2],
         "current_l1": currents[0],
         "current_l2": currents[1],
         "current_l3": currents[2],
-        "active_power_total": active_power,
+        "active_power_total": total_real_power_w,
         "apparent_power_total": apparent_power,
         "reactive_power_total": reactive_power,
         "frequency": 50.0 + 0.03 * math.sin(phase / 2.0),
-        "active_energy_import": energy_wh,
-        "voltage_l1_thd": 2.1 + 0.1 * math.sin(phase),
-        "current_l1_thd": 8.0 + 0.4 * math.sin(phase),
-        "voltage_l1_crest_factor": 1.42,
-        "voltage_l2_crest_factor": 1.41,
-        "voltage_l3_crest_factor": 1.43,
-        "voltage_zero_sequence": 0.8,
-        "voltage_negative_sequence": 1.2,
-        "voltage_positive_sequence": voltage,
-        "current_zero_sequence": 0.15,
-        "current_negative_sequence": 0.08,
+        "active_energy_import": active_energy_import_wh,
+        "voltage_l1_thd": 1.8 + 0.7 * load_ratio + 0.1 * math.sin(phase),
+        "current_l1_thd": 4.0 + 5.0 * load_ratio + 0.4 * math.sin(phase),
+        "voltage_l1_crest_factor": 1.40 + 0.02 * load_ratio,
+        "voltage_l2_crest_factor": 1.39 + 0.02 * load_ratio,
+        "voltage_l3_crest_factor": 1.41 + 0.02 * load_ratio,
+        "voltage_zero_sequence": 0.08 + 0.05 * math.sin(phase),
+        "voltage_negative_sequence": 0.15 + 0.05 * abs(math.sin(phase)),
+        "voltage_positive_sequence": sum(voltage_phases) / 3.0,
+        "current_zero_sequence": abs(currents[0] - currents[1]) * 0.08,
+        "current_negative_sequence": (max(currents) - min(currents)) * 0.2,
         "current_positive_sequence": sum(currents) / 3.0,
     }
-    phase_angles = (0.0, -2.0 * math.pi / 3.0, 2.0 * math.pi / 3.0)
     for index, label in enumerate(("l1", "l2", "l3")):
-        voltage_magnitude = (voltage, voltage * 0.997, voltage * 1.003)[index]
+        voltage_magnitude = voltage_phases[index]
         current_magnitude = currents[index]
         voltage_phase = phase_angles[index]
         current_phase = voltage_phase - angle
@@ -199,6 +220,48 @@ def sample_readings(elapsed_seconds: float) -> dict[str, float]:
         values[f"current_{label}_real"] = current_magnitude * math.cos(current_phase)
         values[f"current_{label}_imag"] = current_magnitude * math.sin(current_phase)
     return values
+
+
+class SimulatorState:
+    """Thread-safe adjustable load and integrated import-energy state."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._started_at = clock()
+        self._last_updated = self._started_at
+        self._total_real_power_w = DEFAULT_ACTIVE_POWER_W
+        self._active_energy_import_wh = INITIAL_ENERGY_WH
+        self._lock = threading.Lock()
+
+    def _update_energy(self, now: float) -> None:
+        elapsed = max(now - self._last_updated, 0.0)
+        self._active_energy_import_wh += self._total_real_power_w * elapsed / 3600.0
+        self._last_updated = now
+
+    def set_total_real_power(self, value: object) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("total_real_power_w must be a number")
+        power = float(value)
+        if not math.isfinite(power) or not 0.0 <= power <= MAX_ACTIVE_POWER_W:
+            raise ValueError(
+                f"total_real_power_w must be between 0 and {MAX_ACTIVE_POWER_W:g} W"
+            )
+        with self._lock:
+            self._update_energy(self._clock())
+            self._total_real_power_w = power
+        return power
+
+    def snapshot(self) -> dict[str, object]:
+        with self._lock:
+            now = self._clock()
+            self._update_energy(now)
+            power = self._total_real_power_w
+            energy = self._active_energy_import_wh
+        readings = sample_readings(now - self._started_at, power, energy)
+        return {
+            "total_real_power_w": power,
+            "readings": readings,
+        }
 
 
 def make_register_map(
@@ -318,18 +381,132 @@ def _recv_exactly(connection: socket.socket, size: int) -> bytes | None:
     return bytes(data)
 
 
+class DashboardHTTPServer(http.server.ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(
+        self,
+        address: tuple[str, int],
+        simulator_state: SimulatorState,
+    ) -> None:
+        self.simulator_state = simulator_state
+        super().__init__(address, DashboardRequestHandler)
+
+
+class DashboardRequestHandler(http.server.BaseHTTPRequestHandler):
+    server: DashboardHTTPServer
+
+    def _authorized(self) -> bool:
+        if self.headers.get("X-Remote-User-Id", "").strip():
+            return True
+        self._send_json(403, {"error": "Open the dashboard through Home Assistant."})
+        return False
+
+    def _send_json(self, status: int, payload: dict[str, object]) -> None:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        if not self._authorized():
+            return
+        if self.path in ("/", "/index.html"):
+            try:
+                page = DASHBOARD_PATH.read_bytes()
+            except OSError:
+                LOGGER.exception("Unable to read the simulator dashboard")
+                self._send_json(500, {"error": "Dashboard file is unavailable."})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(page)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'none'; script-src 'unsafe-inline'; "
+                "style-src 'unsafe-inline'; connect-src 'self'; "
+                "frame-ancestors 'self'",
+            )
+            self.end_headers()
+            self.wfile.write(page)
+            return
+        if self.path == "/api/status":
+            self._send_json(200, self.server.simulator_state.snapshot())
+            return
+        self._send_json(404, {"error": "Not found."})
+
+    def do_POST(self) -> None:
+        if not self._authorized():
+            return
+        if self.path != "/api/power":
+            self._send_json(404, {"error": "Not found."})
+            return
+        content_length = self.headers.get("Content-Length", "")
+        if not content_length.isascii() or not content_length.isdecimal():
+            self._send_json(400, {"error": "A valid Content-Length is required."})
+            return
+        body_size = int(content_length)
+        if body_size > 1024:
+            self._send_json(413, {"error": "Request body is too large."})
+            return
+        try:
+            payload = json.loads(self.rfile.read(body_size))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._send_json(400, {"error": "Request body must be valid JSON."})
+            return
+        if not isinstance(payload, dict) or "total_real_power_w" not in payload:
+            self._send_json(
+                400,
+                {"error": "Provide total_real_power_w in the request body."},
+            )
+            return
+        try:
+            power = self.server.simulator_state.set_total_real_power(
+                payload["total_real_power_w"]
+            )
+        except ValueError as error:
+            self._send_json(400, {"error": str(error)})
+            return
+        self._send_json(
+            200,
+            {
+                "total_real_power_w": power,
+                "readings": self.server.simulator_state.snapshot()["readings"],
+            },
+        )
+
+    def log_message(self, format_string: str, *args: object) -> None:
+        LOGGER.info("%s - %s", self.address_string(), format_string % args)
+
+
 def run() -> None:
     settings = load_settings()
-    started_at = time.monotonic()
+    simulator_state = SimulatorState()
     server = ModbusTCPServer((settings.ip, settings.tcp_port), settings)
+    dashboard_server = DashboardHTTPServer(
+        (settings.ip, INGRESS_PORT),
+        simulator_state,
+    )
 
     def update_readings() -> None:
         while True:
-            elapsed = time.monotonic() - started_at
-            readings = sample_readings(elapsed)
+            readings = simulator_state.snapshot()["readings"]
             server.update(make_register_map(readings, settings.register_offset))
             time.sleep(settings.update_interval / 1000.0)
 
+    dashboard_thread = threading.Thread(
+        target=dashboard_server.serve_forever,
+        name="dashboard",
+        daemon=True,
+    )
+    dashboard_thread.start()
     updater = threading.Thread(
         target=update_readings,
         name="register-updater",
@@ -337,11 +514,12 @@ def run() -> None:
     )
     updater.start()
     LOGGER.info(
-        "Serving Modbus TCP on %s:%s (unit ID %s, register offset %s)",
+        "Serving Modbus TCP on %s:%s (unit ID %s, register offset %s); dashboard on port %s",
         settings.ip,
         settings.tcp_port,
         settings.unit_id,
         settings.register_offset,
+        INGRESS_PORT,
     )
     try:
         server.serve_forever()
@@ -350,6 +528,8 @@ def run() -> None:
     finally:
         server.shutdown()
         server.server_close()
+        dashboard_server.shutdown()
+        dashboard_server.server_close()
 
 
 def main() -> None:

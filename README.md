@@ -5,8 +5,9 @@
 This repository provides a read-only Modbus TCP Home Assistant add-on that
 simulates the measurement and diagnostic registers listed in
 [`Janitza_UMG_96EL_Extended_Modbus_Guide.pdf`](./Janitza_UMG_96EL_Extended_Modbus_Guide.pdf).
-It is a data-source simulator for Home Assistant's built-in Modbus integration;
-it does not create Home Assistant entities by itself.
+It provides a Home Assistant Ingress sidebar dashboard for controlling the
+simulated total real power, as well as a data source for Home Assistant's
+built-in Modbus integration.
 
 ## Install the add-on
 
@@ -22,7 +23,7 @@ Options:
 | Option | Default | Meaning |
 | --- | ---: | --- |
 | `ip` | `0.0.0.0` | IPv4 address to bind. Use `0.0.0.0` to listen on all host interfaces, or enter a specific IPv4 address assigned to the Home Assistant host. |
-| `tcp_port` | `502` | Modbus TCP listen port on the Home Assistant host. |
+| `tcp_port` | `502` | Modbus TCP listen port on the Home Assistant host. Port `8099` is reserved for the sidebar UI. |
 | `unit_id` | `1` | Modbus unit identifier (1–247). |
 | `register_offset` | `0` | Register-address offset: enter `0` for the guide's listed addresses, or `32768` for the alternate addressing note in the guide. |
 | `update_interval` | `200` | Simulated reading refresh interval in milliseconds (50–60000). |
@@ -39,6 +40,20 @@ The add-on uses host networking so the configured IP and port are the actual
 host listener address and port; there is no separate container port mapping to
 keep in sync. Choose `0.0.0.0` unless you specifically need to bind to one host
 interface.
+
+## Sidebar power control
+
+Once the add-on starts, open **Janitza Simulator** from the Home Assistant
+sidebar. The panel offers a 0–10,000 W total real-power slider and presets.
+Press **Apply power** to change the simulated load. The three phase currents
+and vectors, apparent and reactive power, voltage under load, THD, crest factor,
+and sequence values respond to the selected setpoint. Imported energy
+accumulates from the simulated power while the add-on is running and resets
+when the add-on restarts.
+
+The dashboard is served through Home Assistant Ingress and requires the
+authenticated-user header added by the Supervisor. Open it from the sidebar,
+not by navigating directly to the dashboard's HTTP port.
 
 ## Connect Home Assistant
 

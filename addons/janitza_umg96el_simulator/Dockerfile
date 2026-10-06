@@ -1,7 +1,7 @@
 ARG BUILD_FROM=python:3.12-alpine
 FROM ${BUILD_FROM}
 
-ARG BUILD_VERSION=0.2.1
+ARG BUILD_VERSION=0.3.0
 ARG BUILD_ARCH=amd64
 
 LABEL \
@@ -11,5 +11,6 @@ LABEL \
 
 WORKDIR /app
 COPY simulator.py /app/simulator.py
+COPY www /app/www
 
 CMD ["python3", "/app/simulator.py"]

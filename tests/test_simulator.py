@@ -1,3 +1,4 @@
+import http.client
 import json
 import math
 import socket
@@ -8,8 +9,10 @@ import unittest
 from pathlib import Path
 
 from addons.janitza_umg96el_simulator.simulator import (
+    DashboardHTTPServer,
     FLOAT_REGISTERS,
     ModbusTCPServer,
+    SimulatorState,
     Settings,
     load_settings,
     make_register_map,
@@ -98,7 +101,37 @@ class RegisterMapTests(unittest.TestCase):
         later = sample_readings(10)
         self.assertNotEqual(first["current_l1"], later["current_l1"])
         self.assertTrue(math.isclose(first["frequency"], 50.0))
-        self.assertGreater(later["active_energy_import"], first["active_energy_import"])
+        self.assertNotEqual(first["voltage_l1_n"], later["voltage_l1_n"])
+
+    def test_power_setpoint_drives_consistent_three_phase_readings(self) -> None:
+        elapsed = 12.0
+        for power in (0.0, 2780.0, 10000.0):
+            readings = sample_readings(elapsed, power)
+            phase_real_power = sum(
+                readings[f"voltage_{phase}_real"]
+                * readings[f"current_{phase}_real"]
+                + readings[f"voltage_{phase}_imag"]
+                * readings[f"current_{phase}_imag"]
+                for phase in ("l1", "l2", "l3")
+            )
+            self.assertTrue(
+                math.isclose(readings["active_power_total"], power, abs_tol=1e-9)
+            )
+            self.assertTrue(math.isclose(phase_real_power, power, rel_tol=1e-9, abs_tol=1e-9))
+            self.assertTrue(
+                math.isclose(
+                    readings["apparent_power_total"] ** 2,
+                    power**2 + readings["reactive_power_total"] ** 2,
+                    rel_tol=1e-9,
+                    abs_tol=1e-9,
+                )
+            )
+            self.assertGreaterEqual(readings["current_l1"], 0.0)
+        self.assertEqual(sample_readings(elapsed, 0)["current_l1"], 0.0)
+        self.assertGreater(
+            sample_readings(elapsed, 10000)["current_l1"],
+            sample_readings(elapsed, 1000)["current_l1"],
+        )
 
     def test_tcp_server_handles_a_complete_modbus_request(self) -> None:
         server = ModbusTCPServer((self.settings.ip, 0), self.settings)
@@ -214,6 +247,114 @@ class SettingsTests(unittest.TestCase):
                 )
                 with self.assertRaises(ValueError):
                     load_settings(options_path)
+
+    def test_rejects_modbus_port_reserved_for_sidebar(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            options_path = Path(directory) / "options.json"
+            options_path.write_text(
+                json.dumps(
+                    {
+                        "ip": "127.0.0.1",
+                        "tcp_port": 8099,
+                        "unit_id": 1,
+                        "register_offset": 0,
+                        "update_interval": 200,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "reserved for the sidebar"):
+                load_settings(options_path)
+
+
+class SimulatorStateTests(unittest.TestCase):
+    def test_setpoint_changes_readings_and_energy_integrates_power(self) -> None:
+        now = [1000.0]
+        state = SimulatorState(clock=lambda: now[0])
+        initial = state.snapshot()
+        self.assertEqual(initial["total_real_power_w"], 2780.0)
+
+        now[0] += 3600
+        state.set_total_real_power(1000)
+        changed = state.snapshot()
+        self.assertEqual(changed["readings"]["active_power_total"], 1000.0)
+        self.assertGreater(changed["readings"]["current_l1"], 0)
+        self.assertAlmostEqual(
+            changed["readings"]["active_energy_import"],
+            initial["readings"]["active_energy_import"] + 2780,
+        )
+
+        now[0] += 1800
+        accumulated = state.snapshot()
+        self.assertAlmostEqual(
+            accumulated["readings"]["active_energy_import"],
+            changed["readings"]["active_energy_import"] + 500,
+        )
+
+    def test_setpoint_rejects_invalid_power_values(self) -> None:
+        state = SimulatorState()
+        for value in (-1, 10001, float("nan"), float("inf"), True, "1000"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                state.set_total_real_power(value)
+
+    def test_dashboard_requires_ingress_user_and_applies_setpoint(self) -> None:
+        state = SimulatorState()
+        server = DashboardHTTPServer(("127.0.0.1", 0), state)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection(*server.server_address, timeout=2)
+            connection.request("GET", "/api/status")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 403)
+            response.read()
+
+            connection.request(
+                "GET",
+                "/",
+                headers={"X-Remote-User-Id": "test-user"},
+            )
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertIn(
+                b"Janitza UMG 96-EL",
+                response.read(),
+            )
+
+            connection.request(
+                "POST",
+                "/api/power",
+                body=json.dumps({"total_real_power_w": 4200}),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Remote-User-Id": "test-user",
+                },
+            )
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            result = json.loads(response.read())
+            self.assertEqual(result["total_real_power_w"], 4200)
+            self.assertEqual(result["readings"]["active_power_total"], 4200)
+            registers = make_register_map(result["readings"])
+            encoded_power = struct.pack(">HH", registers[19026], registers[19027])
+            self.assertEqual(struct.unpack(">f", encoded_power)[0], 4200)
+
+            connection.request(
+                "POST",
+                "/api/power",
+                body=json.dumps({"total_real_power_w": 20000}),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Remote-User-Id": "test-user",
+                },
+            )
+            response = connection.getresponse()
+            self.assertEqual(response.status, 400)
+            connection.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
 
 if __name__ == "__main__":

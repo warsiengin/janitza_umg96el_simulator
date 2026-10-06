@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Janitza UMG 96-EL Simulator</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Roboto, "Segoe UI", sans-serif;
+        background: #111318;
+        color: #e5e7eb;
+        font-synthesis: none;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background:
+          radial-gradient(ellipse at 85% 0%, #123c4333, transparent 42rem),
+          #111318;
+      }
+
+      main {
+        width: min(100%, 1080px);
+        margin: 0 auto;
+        padding: 36px clamp(18px, 4vw, 48px) 48px;
+      }
+
+      .eyebrow {
+        color: #55d6ad;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 8px 0 6px;
+        font-size: clamp(25px, 4vw, 36px);
+        letter-spacing: -.035em;
+      }
+
+      .subtitle { margin: 0; color: #9ca3af; }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 18px;
+        color: #aeb6c2;
+        font-size: 13px;
+      }
+
+      .status::before {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #55d6ad;
+        content: "";
+        box-shadow: 0 0 12px #55d6ad80;
+      }
+
+      .status.error { color: #ff9c95; }
+      .status.error::before { background: #ff7066; box-shadow: none; }
+
+      .control, .reading {
+        border: 1px solid #30343d;
+        border-radius: 16px;
+        background: #1b1e24;
+      }
+
+      .control {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 22px;
+        margin-top: 24px;
+        padding: clamp(20px, 4vw, 30px);
+      }
+
+      .control h2 { margin: 0 0 7px; font-size: 18px; }
+      .hint { margin: 0; color: #9ca3af; font-size: 13px; }
+
+      .power-value {
+        min-width: 150px;
+        color: #55d6ad;
+        font-variant-numeric: tabular-nums;
+        font-size: clamp(28px, 5vw, 42px);
+        font-weight: 700;
+        text-align: right;
+      }
+
+      .slider-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        grid-column: 1 / -1;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        height: 8px;
+        accent-color: #37c99a;
+        cursor: pointer;
+      }
+
+      .range-label { color: #9ca3af; font-size: 12px; white-space: nowrap; }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        grid-column: 1 / -1;
+      }
+
+      button {
+        min-height: 38px;
+        padding: 8px 14px;
+        border: 1px solid #3b414b;
+        border-radius: 9px;
+        background: #252a32;
+        color: #e5e7eb;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button:hover { border-color: #55d6ad; }
+      button:disabled { cursor: wait; opacity: .6; }
+      button.primary { border-color: #37c99a; background: #147b60; font-weight: 700; }
+      button.preset { min-height: 32px; padding: 5px 10px; color: #c4cad3; font-size: 12px; }
+      .actions-spacer { flex: 1; }
+
+      .section-title {
+        margin: 32px 0 13px;
+        color: #b6bdc8;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .reading { min-width: 0; padding: 17px; }
+      .reading .label { color: #9ca3af; font-size: 12px; }
+      .reading .value {
+        margin-top: 10px;
+        overflow: hidden;
+        color: #f2f4f7;
+        font-variant-numeric: tabular-nums;
+        font-size: clamp(19px, 2.8vw, 25px);
+        font-weight: 600;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .reading .unit { color: #89919e; font-size: 12px; font-weight: 400; }
+      .footnote { margin-top: 22px; color: #777f8c; font-size: 12px; line-height: 1.5; }
+
+      @media (max-width: 720px) {
+        .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .control { grid-template-columns: 1fr; gap: 14px; }
+        .power-value { text-align: left; }
+        .slider-row, .actions { grid-column: 1; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">Power analyzer · Modbus TCP</div>
+        <h1>Janitza UMG 96-EL</h1>
+        <p class="subtitle">Live three-phase simulator controls and readings</p>
+        <div id="status" class="status" role="status">Connecting to simulator…</div>
+      </header>
+
+      <section class="control" aria-labelledby="control-title">
+        <div>
+          <h2 id="control-title">Total real power</h2>
+          <p class="hint">Set the simulated three-phase active power. Other readings respond to the load.</p>
+        </div>
+        <div class="power-value"><span id="power-preview">—</span><span class="unit"> W</span></div>
+        <div class="slider-row">
+          <span class="range-label">0 W</span>
+          <input id="power-slider" type="range" min="0" max="10000" step="10" value="2780"
+            aria-label="Total real power in watts">
+          <span class="range-label">10 kW</span>
+        </div>
+        <div class="actions">
+          <button class="preset" type="button" data-power="0">Off</button>
+          <button class="preset" type="button" data-power="1000">1 kW</button>
+          <button class="preset" type="button" data-power="3000">3 kW</button>
+          <button class="preset" type="button" data-power="6000">6 kW</button>
+          <button class="preset" type="button" data-power="10000">10 kW</button>
+          <span class="actions-spacer"></span>
+          <button id="apply" class="primary" type="button">Apply power</button>
+        </div>
+      </section>
+
+      <h2 class="section-title">Electrical readings</h2>
+      <section class="grid" aria-live="polite">
+        <article class="reading"><div class="label">Real power · total</div><div class="value"><span data-reading="active_power_total">—</span> <span class="unit">W</span></div></article>
+        <article class="reading"><div class="label">Apparent power · total</div><div class="value"><span data-reading="apparent_power_total">—</span> <span class="unit">VA</span></div></article>
+        <article class="reading"><div class="label">Reactive power · total</div><div class="value"><span data-reading="reactive_power_total">—</span> <span class="unit">var</span></div></article>
+        <article class="reading"><div class="label">Frequency</div><div class="value"><span data-reading="frequency">—</span> <span class="unit">Hz</span></div></article>
+        <article class="reading"><div class="label">Voltage · L1 / L2 / L3</div><div class="value"><span data-reading="voltage_l1_n">—</span><span class="unit"> / </span><span data-reading="voltage_l2_n">—</span><span class="unit"> / </span><span data-reading="voltage_l3_n">—</span> <span class="unit">V</span></div></article>
+        <article class="reading"><div class="label">Current · L1 / L2 / L3</div><div class="value"><span data-reading="current_l1">—</span><span class="unit"> / </span><span data-reading="current_l2">—</span><span class="unit"> / </span><span data-reading="current_l3">—</span> <span class="unit">A</span></div></article>
+        <article class="reading"><div class="label">Imported energy</div><div class="value"><span data-reading="active_energy_import">—</span> <span class="unit">Wh</span></div></article>
+        <article class="reading"><div class="label">Voltage THD · L1</div><div class="value"><span data-reading="voltage_l1_thd">—</span> <span class="unit">%</span></div></article>
+        <article class="reading"><div class="label">Current THD · L1</div><div class="value"><span data-reading="current_l1_thd">—</span> <span class="unit">%</span></div></article>
+        <article class="reading"><div class="label">Positive-sequence voltage</div><div class="value"><span data-reading="voltage_positive_sequence">—</span> <span class="unit">V</span></div></article>
+        <article class="reading"><div class="label">Positive-sequence current</div><div class="value"><span data-reading="current_positive_sequence">—</span> <span class="unit">A</span></div></article>
+        <article class="reading"><div class="label">Voltage crest factor · L1</div><div class="value"><span data-reading="voltage_l1_crest_factor">—</span></div></article>
+      </section>
+      <p class="footnote">Synthetic readings update with the selected load. Imported energy accumulates while the simulator runs and resets when the add-on restarts.</p>
+    </main>
+    <script>
+      const slider = document.querySelector("#power-slider");
+      const preview = document.querySelector("#power-preview");
+      const applyButton = document.querySelector("#apply");
+      const status = document.querySelector("#status");
+      const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+      let applying = false;
+      let dirtyPower = false;
+
+      function showStatus(message, error = false) {
+        status.textContent = message;
+        status.classList.toggle("error", error);
+      }
+
+      function render(data) {
+        if (!dirtyPower) {
+          slider.value = String(data.total_real_power_w);
+          preview.textContent = numberFormat.format(data.total_real_power_w);
+        }
+        for (const [name, value] of Object.entries(data.readings)) {
+          const formatted = numberFormat.format(value);
+          document.querySelectorAll(`[data-reading="${name}"]`).forEach((element) => {
+            element.textContent = formatted;
+          });
+        }
+        showStatus("Simulator connected · readings update live");
+      }
+
+      async function refresh() {
+        try {
+          const response = await fetch("api/status", { cache: "no-store" });
+          if (!response.ok) throw new Error(`Status request failed (${response.status})`);
+          render(await response.json());
+        } catch (error) {
+          showStatus(error.message || "Could not reach the simulator.", true);
+        }
+      }
+
+      slider.addEventListener("input", () => {
+        dirtyPower = true;
+        preview.textContent = numberFormat.format(Number(slider.value));
+      });
+
+      document.querySelectorAll("[data-power]").forEach((button) => {
+        button.addEventListener("click", () => {
+          dirtyPower = true;
+          slider.value = button.dataset.power;
+          preview.textContent = numberFormat.format(Number(slider.value));
+        });
+      });
+
+      applyButton.addEventListener("click", async () => {
+        if (applying) return;
+        applying = true;
+        applyButton.disabled = true;
+        showStatus("Applying load…");
+        try {
+          const response = await fetch("api/power", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ total_real_power_w: Number(slider.value) }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || `Update failed (${response.status})`);
+          dirtyPower = false;
+          render(data);
+        } catch (error) {
+          showStatus(error.message || "Could not update the simulated load.", true);
+        } finally {
+          applying = false;
+          applyButton.disabled = false;
+        }
+      });
+
+      refresh();
+      window.setInterval(refresh, 1000);
+    </script>
+  </body>
+</html>
