@@ -228,6 +228,8 @@
       const applyButton = document.querySelector("#apply");
       const status = document.querySelector("#status");
       const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+      const ingressBase = window.location.pathname.replace(/\/+$/, "");
+      const apiUrl = (path) => `${ingressBase}/${path}`;
       let applying = false;
       let dirtyPower = false;
 
@@ -252,7 +254,7 @@
 
       async function refresh() {
         try {
-          const response = await fetch("api/status", { cache: "no-store" });
+          const response = await fetch(apiUrl("api/status"), { cache: "no-store" });
           if (!response.ok) throw new Error(`Status request failed (${response.status})`);
           render(await response.json());
         } catch (error) {
@@ -279,7 +281,7 @@
         applyButton.disabled = true;
         showStatus("Applying load…");
         try {
-          const response = await fetch("api/power", {
+          const response = await fetch(apiUrl("api/power"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ total_real_power_w: Number(slider.value) }),

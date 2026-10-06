@@ -383,6 +383,7 @@ class ServerStartupTests(unittest.TestCase):
 
     def test_dashboard_port_conflict_releases_modbus_socket(self) -> None:
         created_servers: list[ModbusTCPServer] = []
+        dashboard_addresses: list[tuple[str, int]] = []
         real_modbus_server = ModbusTCPServer
 
         def create_modbus_server(
@@ -393,6 +394,13 @@ class ServerStartupTests(unittest.TestCase):
             created_servers.append(server)
             return server
 
+        def reject_dashboard(
+            address: tuple[str, int],
+            _simulator_state: SimulatorState,
+        ) -> DashboardHTTPServer:
+            dashboard_addresses.append(address)
+            raise OSError(errno.EADDRINUSE, "occupied")
+
         with (
             mock.patch(
                 "addons.janitza_umg96el_simulator.simulator.ModbusTCPServer",
@@ -400,7 +408,7 @@ class ServerStartupTests(unittest.TestCase):
             ),
             mock.patch(
                 "addons.janitza_umg96el_simulator.simulator.DashboardHTTPServer",
-                side_effect=OSError(errno.EADDRINUSE, "occupied"),
+                side_effect=reject_dashboard,
             ),
         ):
             with self.assertRaisesRegex(OSError, "Dashboard address .* already in use"):
@@ -413,6 +421,7 @@ class ServerStartupTests(unittest.TestCase):
                 )
                 _create_servers(settings, SimulatorState())
 
+        self.assertEqual(dashboard_addresses, [("0.0.0.0", 8099)])
         self.assertEqual(len(created_servers), 1)
         with socket.socket() as available:
             available.bind(created_servers[0].server_address)

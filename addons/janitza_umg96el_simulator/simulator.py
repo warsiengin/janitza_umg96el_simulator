@@ -506,7 +506,7 @@ def _create_servers(
 
     try:
         dashboard_server = DashboardHTTPServer(
-            (settings.ip, INGRESS_PORT),
+            ("0.0.0.0", INGRESS_PORT),
             simulator_state,
         )
     except OSError as error:
@@ -549,7 +549,8 @@ def run() -> None:
     )
     updater.start()
     LOGGER.info(
-        "Serving Modbus TCP on %s:%s (unit ID %s, register offset %s); dashboard on port %s",
+        "Serving Modbus TCP on %s:%s (unit ID %s, register offset %s); "
+        "Home Assistant Ingress dashboard on 0.0.0.0:%s",
         settings.ip,
         settings.tcp_port,
         settings.unit_id,
