@@ -1,3 +1,5 @@
+<img width="256" height="256" alt="icon" src="https://github.com/user-attachments/assets/4dd6bcdd-ec7d-4344-889e-edb64bc72e52" />
+
 # Janitza UMG 96-EL Home Assistant Modbus simulator
 
 This repository provides a read-only Modbus TCP Home Assistant add-on that
