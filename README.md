@@ -41,6 +41,11 @@ host listener address and port; there is no separate container port mapping to
 keep in sync. Choose `0.0.0.0` unless you specifically need to bind to one host
 interface.
 
+If startup reports that the Modbus address is already in use, another process
+is listening on that configured IP and port. Stop the duplicate simulator or
+other service, or choose a free `tcp_port`. A successful
+`Serving Modbus TCP on ...` log line confirms the listener started.
+
 ## Sidebar power control
 
 Once the add-on starts, open **Janitza Simulator** from the Home Assistant

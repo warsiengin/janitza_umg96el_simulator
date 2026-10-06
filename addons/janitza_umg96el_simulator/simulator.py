@@ -5,9 +5,11 @@ from __future__ import annotations
 import http.server
 import ipaddress
 import json
+import errno
 import logging
 import math
 import os
+import signal
 import socket
 import socketserver
 import struct
@@ -486,14 +488,47 @@ class DashboardRequestHandler(http.server.BaseHTTPRequestHandler):
         LOGGER.info("%s - %s", self.address_string(), format_string % args)
 
 
+def _create_servers(
+    settings: Settings,
+    simulator_state: SimulatorState,
+) -> tuple[ModbusTCPServer, DashboardHTTPServer]:
+    address = (settings.ip, settings.tcp_port)
+    try:
+        modbus_server = ModbusTCPServer(address, settings)
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
+            message = (
+                f"Modbus TCP address {settings.ip}:{settings.tcp_port} is already in use. "
+                "Stop the other listener or choose a different tcp_port."
+            )
+            raise OSError(error.errno, message) from error
+        raise
+
+    try:
+        dashboard_server = DashboardHTTPServer(
+            (settings.ip, INGRESS_PORT),
+            simulator_state,
+        )
+    except OSError as error:
+        modbus_server.server_close()
+        if error.errno == errno.EADDRINUSE:
+            message = (
+                f"Dashboard address {settings.ip}:{INGRESS_PORT} is already in use. "
+                "Stop the other listener or choose a different bind IP."
+            )
+            raise OSError(error.errno, message) from error
+        raise
+    return modbus_server, dashboard_server
+
+
+def _handle_sigterm(_signum: int, _frame: object) -> None:
+    raise KeyboardInterrupt
+
+
 def run() -> None:
     settings = load_settings()
     simulator_state = SimulatorState()
-    server = ModbusTCPServer((settings.ip, settings.tcp_port), settings)
-    dashboard_server = DashboardHTTPServer(
-        (settings.ip, INGRESS_PORT),
-        simulator_state,
-    )
+    server, dashboard_server = _create_servers(settings, simulator_state)
 
     def update_readings() -> None:
         while True:
@@ -521,11 +556,16 @@ def run() -> None:
         settings.register_offset,
         INGRESS_PORT,
     )
+    previous_sigterm_handler = signal.signal(
+        signal.SIGTERM,
+        _handle_sigterm,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        LOGGER.info("Stopping Modbus TCP simulator")
+        LOGGER.info("Stopping simulator after shutdown signal")
     finally:
+        signal.signal(signal.SIGTERM, previous_sigterm_handler)
         server.shutdown()
         server.server_close()
         dashboard_server.shutdown()
@@ -541,7 +581,7 @@ def main() -> None:
         run()
     except (OSError, ValueError, json.JSONDecodeError) as error:
         LOGGER.error("Unable to start Janitza Modbus simulator: %s", error)
-        raise
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

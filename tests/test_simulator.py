@@ -1,4 +1,5 @@
 import http.client
+import errno
 import json
 import math
 import socket
@@ -6,6 +7,7 @@ import struct
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from addons.janitza_umg96el_simulator.simulator import (
@@ -14,6 +16,7 @@ from addons.janitza_umg96el_simulator.simulator import (
     ModbusTCPServer,
     SimulatorState,
     Settings,
+    _create_servers,
     load_settings,
     make_register_map,
     process_pdu,
@@ -355,6 +358,64 @@ class SimulatorStateTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+
+class ServerStartupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.settings = Settings(
+            ip="127.0.0.1",
+            tcp_port=503,
+            unit_id=1,
+            register_offset=0,
+            update_interval=200,
+        )
+
+    def test_modbus_port_conflict_reports_the_endpoint(self) -> None:
+        with mock.patch(
+            "addons.janitza_umg96el_simulator.simulator.ModbusTCPServer",
+            side_effect=OSError(errno.EADDRINUSE, "occupied"),
+        ):
+            with self.assertRaises(OSError) as raised:
+                _create_servers(self.settings, SimulatorState())
+        self.assertEqual(raised.exception.errno, errno.EADDRINUSE)
+        self.assertIn("already in use", str(raised.exception))
+        self.assertIn("choose a different tcp_port", str(raised.exception))
+
+    def test_dashboard_port_conflict_releases_modbus_socket(self) -> None:
+        created_servers: list[ModbusTCPServer] = []
+        real_modbus_server = ModbusTCPServer
+
+        def create_modbus_server(
+            address: tuple[str, int],
+            settings: Settings,
+        ) -> ModbusTCPServer:
+            server = real_modbus_server(address, settings)
+            created_servers.append(server)
+            return server
+
+        with (
+            mock.patch(
+                "addons.janitza_umg96el_simulator.simulator.ModbusTCPServer",
+                side_effect=create_modbus_server,
+            ),
+            mock.patch(
+                "addons.janitza_umg96el_simulator.simulator.DashboardHTTPServer",
+                side_effect=OSError(errno.EADDRINUSE, "occupied"),
+            ),
+        ):
+            with self.assertRaisesRegex(OSError, "Dashboard address .* already in use"):
+                settings = Settings(
+                    ip=self.settings.ip,
+                    tcp_port=0,
+                    unit_id=self.settings.unit_id,
+                    register_offset=self.settings.register_offset,
+                    update_interval=self.settings.update_interval,
+                )
+                _create_servers(settings, SimulatorState())
+
+        self.assertEqual(len(created_servers), 1)
+        with socket.socket() as available:
+            available.bind(created_servers[0].server_address)
 
 
 if __name__ == "__main__":
